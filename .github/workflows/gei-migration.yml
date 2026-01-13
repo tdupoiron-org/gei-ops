@@ -31,7 +31,7 @@ jobs:
               return match ? match[1].trim() : '';
             };
             
-            const sourceUrl = parseField('Source GitHub Enterprise Server URL');
+            const sourceUrl = parseField('Source GitHub Enterprise Server Instance');
             const sourceOrg = parseField('Source Organization');
             const targetOrg = parseField('Target GitHub Enterprise Cloud Organization');
             const migrationType = parseField('Migration Type');
@@ -140,6 +140,9 @@ jobs:
           REPOSITORIES="${{ steps.parse.outputs.repositories }}"
           LOG_PATH="${{ steps.log-path.outputs.path }}"
           
+          # Trim whitespace and trailing slashes from SOURCE_URL
+          SOURCE_URL=$(echo "$SOURCE_URL" | xargs | sed 's:/*$::')
+          
           echo "Starting migration process..."
           echo "Source: $SOURCE_URL"
           echo "Source Org: $SOURCE_ORG"
@@ -147,7 +150,11 @@ jobs:
           echo "Type: $MIGRATION_TYPE"
           
           # Extract source host from URL
-          SOURCE_HOST=$(echo "$SOURCE_URL" | sed -E 's|https?://||' | cut -d'/' -f1)
+          SOURCE_HOST=$(echo "$SOURCE_URL" | sed -E 's|https?://||' | sed 's:/*$::' | cut -d'/' -f1)
+          GHES_API_URL="https://${SOURCE_HOST}/api/v3"
+          
+          echo "GHES Host: $SOURCE_HOST"
+          echo "GHES API URL: $GHES_API_URL"
           
           if [ "$MIGRATION_TYPE" = "All repositories" ]; then
             echo "Migrating all repositories from $SOURCE_ORG to $TARGET_ORG..."
@@ -156,7 +163,7 @@ jobs:
             gh gei generate-script \
               --github-source-org "$SOURCE_ORG" \
               --github-target-org "$TARGET_ORG" \
-              --ghes-api-url "https://$SOURCE_HOST/api/v3" \
+              --ghes-api-url "$GHES_API_URL" \
               --target-api-url "https://api.customersuccess.ghe.com" \
               --output "$LOG_PATH/migration-script.ps1" \
               --verbose
@@ -177,7 +184,7 @@ jobs:
                   --source-repo "$REPO" \
                   --github-target-org "$TARGET_ORG" \
                   --target-repo "$REPO" \
-                  --ghes-api-url "https://$SOURCE_HOST/api/v3" \
+                  --ghes-api-url "$GHES_API_URL" \
                   --target-api-url "https://api.customersuccess.ghe.com" \
                   --wait \
                   --verbose 2>&1 | tee -a "$LOG_PATH/$REPO-migration.log"
@@ -199,7 +206,7 @@ jobs:
                   --source-repo "$REPO" \
                   --github-target-org "$TARGET_ORG" \
                   --target-repo "$REPO" \
-                  --ghes-api-url "https://$SOURCE_HOST/api/v3" \
+                  --ghes-api-url "$GHES_API_URL" \
                   --target-api-url "https://api.customersuccess.ghe.com" \
                   --wait \
                   --verbose 2>&1 | tee -a "$LOG_PATH/$REPO-migration.log"
