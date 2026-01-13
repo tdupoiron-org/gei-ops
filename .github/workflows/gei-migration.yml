@@ -124,6 +124,10 @@ jobs:
           mkdir -p "$LOG_PATH"
           echo "path=$LOG_PATH" >> $GITHUB_OUTPUT
       
+      - name: Authenticate to target GHEC
+        run: |
+          echo "${{ secrets.GHE_CLOUD_PAT }}" | gh auth login --hostname customersuccess.ghe.com --with-token
+        
       - name: Run GEI migration
         id: migrate
         run: |
@@ -153,6 +157,7 @@ jobs:
               --github-source-org "$SOURCE_ORG" \
               --github-target-org "$TARGET_ORG" \
               --ghes-api-url "https://$SOURCE_HOST/api/v3" \
+              --target-api-url "https://api.customersuccess.ghe.com" \
               --output "$LOG_PATH/migration-script.ps1" \
               --verbose
             
@@ -173,6 +178,7 @@ jobs:
                   --github-target-org "$TARGET_ORG" \
                   --target-repo "$REPO" \
                   --ghes-api-url "https://$SOURCE_HOST/api/v3" \
+                  --target-api-url "https://api.customersuccess.ghe.com" \
                   --wait \
                   --verbose 2>&1 | tee -a "$LOG_PATH/$REPO-migration.log"
               fi
@@ -194,6 +200,7 @@ jobs:
                   --github-target-org "$TARGET_ORG" \
                   --target-repo "$REPO" \
                   --ghes-api-url "https://$SOURCE_HOST/api/v3" \
+                  --target-api-url "https://api.customersuccess.ghe.com" \
                   --wait \
                   --verbose 2>&1 | tee -a "$LOG_PATH/$REPO-migration.log"
               fi

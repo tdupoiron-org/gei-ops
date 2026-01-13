@@ -10,12 +10,14 @@ body:
         
         Use this form to request a migration from GitHub Enterprise Server to GitHub Enterprise Cloud (customersuccess.ghe.com).
         
-  - type: input
+  - type: dropdown
     id: source-url
     attributes:
-      label: Source GitHub Enterprise Server URL
-      description: The URL of your GitHub Enterprise Server instance
-      placeholder: https://ghes.example.com
+      label: Source GitHub Enterprise Server Instance
+      description: Select your GitHub Enterprise Server instance
+      options:
+        - https://ghes.dupoiron.com
+        - https://ghes-az.dupoiron.com
     validations:
       required: true
       
