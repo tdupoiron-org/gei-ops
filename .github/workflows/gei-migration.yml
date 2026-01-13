@@ -202,9 +202,8 @@ jobs:
           
           echo "Migration completed successfully!"
         env:
-          GH_PAT: ${{ secrets.GHES_PAT }}
+          GH_PAT: ${{ secrets.GHE_CLOUD_PAT }}
           GH_SOURCE_PAT: ${{ secrets.GHES_PAT }}
-          GH_TARGET_PAT: ${{ secrets.GHE_CLOUD_PAT }}
           GITHUB_TOKEN: ${{ secrets.GHE_CLOUD_PAT }}
         continue-on-error: true
       
