@@ -2,7 +2,7 @@ name: GEI Migration Workflow
 
 on:
   issues:
-    types: [opened, labeled]
+    types: [opened]
 
 permissions:
   issues: write
@@ -32,16 +32,18 @@ jobs:
             };
             
             const sourceUrl = parseField('Source GitHub Enterprise Server URL');
+            const sourceOrg = parseField('Source Organization');
             const targetOrg = parseField('Target GitHub Enterprise Cloud Organization');
             const migrationType = parseField('Migration Type');
             const repositories = parseField('Repository Names');
             
             core.setOutput('source-url', sourceUrl);
+            core.setOutput('source-org', sourceOrg);
             core.setOutput('target-org', targetOrg);
             core.setOutput('migration-type', migrationType);
             core.setOutput('repositories', repositories);
             
-            console.log('Parsed data:', { sourceUrl, targetOrg, migrationType, repositories });
+            console.log('Parsed data:', { sourceUrl, sourceOrg, targetOrg, migrationType, repositories });
       
       - name: Update issue - Starting migration
         uses: actions/github-script@v7
@@ -53,6 +55,7 @@ jobs:
               issue_number: context.payload.issue.number,
               body: `🚀 **Migration Process Started**\n\n` +
                     `- **Source:** ${{ steps.parse.outputs.source-url }}\n` +
+                    `- **Source Org:** ${{ steps.parse.outputs.source-org }}\n` +
                     `- **Target Org:** ${{ steps.parse.outputs.target-org }}\n` +
                     `- **Type:** ${{ steps.parse.outputs.migration-type }}\n\n` +
                     `The migration process is now initializing...`
@@ -127,6 +130,7 @@ jobs:
           set -e
           
           SOURCE_URL="${{ steps.parse.outputs.source-url }}"
+          SOURCE_ORG="${{ steps.parse.outputs.source-org }}"
           TARGET_ORG="${{ steps.parse.outputs.target-org }}"
           MIGRATION_TYPE="${{ steps.parse.outputs.migration-type }}"
           REPOSITORIES="${{ steps.parse.outputs.repositories }}"
@@ -134,11 +138,11 @@ jobs:
           
           echo "Starting migration process..."
           echo "Source: $SOURCE_URL"
+          echo "Source Org: $SOURCE_ORG"
           echo "Target: $TARGET_ORG"
           echo "Type: $MIGRATION_TYPE"
           
-          # Extract source org from URL
-          SOURCE_ORG=$(echo "$SOURCE_URL" | sed -E 's|https?://[^/]+/||' | cut -d'/' -f1)
+          # Extract source host from URL
           SOURCE_HOST=$(echo "$SOURCE_URL" | sed -E 's|https?://||' | cut -d'/' -f1)
           
           if [ "$MIGRATION_TYPE" = "All repositories" ]; then
@@ -228,7 +232,8 @@ jobs:
                       `All repositories have been migrated to the target organization.\n\n` +
                       `**Details:**\n` +
                       `- Source: ${{ steps.parse.outputs.source-url }}\n` +
-                      `- Target: ${{ steps.parse.outputs.target-org }}\n` +
+                      `- Source Org: ${{ steps.parse.outputs.source-org }}\n` +
+                      `- Target Org: ${{ steps.parse.outputs.target-org }}\n` +
                       `- Type: ${{ steps.parse.outputs.migration-type }}\n\n` +
                       `Migration logs are available in the workflow artifacts.`
               });

@@ -20,6 +20,15 @@ body:
       required: true
       
   - type: input
+    id: source-org
+    attributes:
+      label: Source Organization
+      description: The organization name on the source GitHub Enterprise Server
+      placeholder: my-source-org
+    validations:
+      required: true
+      
+  - type: input
     id: target-org
     attributes:
       label: Target GitHub Enterprise Cloud Organization
