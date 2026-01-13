@@ -55,23 +55,73 @@ To enable actual migrations, configure these repository secrets:
 
 ## Current Status
 
-This is a **simple version** of the workflow that:
+This workflow provides **full migration functionality** and:
 - ✅ Collects migration request information via issue form
 - ✅ Parses and validates the request
-- ✅ Updates the issue with progress
+- ✅ Validates required secrets are configured
 - ✅ Installs the GEI CLI extension
-- ⚠️ Does not perform actual migrations yet (requires secrets configuration)
+- ✅ Performs actual repository migrations using GEI
+- ✅ Supports both full organization and selective repository migrations
+- ✅ Updates the issue with real-time progress
+- ✅ Uploads migration logs as workflow artifacts
+- ✅ Handles errors and provides troubleshooting guidance
+- ✅ Automatically closes issues on successful migration
 
-## Next Steps
+## Migration Process
 
-To enable full migration functionality:
+The workflow performs the following steps:
 
-1. Configure the required PAT secrets
-2. Implement actual GEI migration commands (`gh gei migrate-repo`)
-3. Add comprehensive error handling
-4. Implement migration logging and artifact storage
-5. Add retry logic for failed migrations
-6. Set up email/Slack notifications
+1. **Validation**: Checks that required secrets (GHES_PAT, GHE_CLOUD_PAT) are configured
+2. **Parsing**: Extracts migration details from the issue form
+3. **Installation**: Installs the GitHub Enterprise Importer CLI
+4. **Migration**: 
+   - For "All repositories": Migrates all repos from the source organization
+   - For specific repos: Migrates only the listed repositories
+5. **Logging**: Saves detailed logs for each repository migration
+6. **Reporting**: Updates the issue with success/failure status
+7. **Completion**: Closes the issue automatically on success
+
+## Setup Instructions for Administrators
+
+### 1. Configure Repository Secrets
+
+Add these secrets in repository settings:
+
+```
+GHES_PAT - Personal Access Token for source GitHub Enterprise Server
+GHE_CLOUD_PAT - Personal Access Token for target GitHub Enterprise Cloud
+```
+
+### 2. Create the PATs
+
+**Source GHES PAT** needs:
+- `repo` (full control of private repositories)
+- `admin:org` (read:org - read organization membership)
+- `workflow` (update GitHub Actions workflows)
+
+**Target GHE Cloud PAT** needs:
+- `repo` (full control of private repositories)
+- `admin:org` (read:org, write:org - manage organization)
+- `workflow` (update GitHub Actions workflows)
+
+### 3. Test the Workflow
+
+Create a test migration issue to verify the setup.
+
+## Troubleshooting
+
+### Migration Fails with Authentication Error
+- Verify both PATs are correctly configured in repository secrets
+- Ensure PATs have the required scopes
+- Check that PATs haven't expired
+
+### Repository Not Found
+- Verify the source URL is correct
+- Ensure the repository name is spelled correctly
+- Check that the PAT has access to the source repository
+
+### Migration Logs
+All migration logs are automatically uploaded as workflow artifacts and retained for 30 days. Download them from the Actions tab to review detailed migration information.
 
 ## Documentation
 
