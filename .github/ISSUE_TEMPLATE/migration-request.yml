@@ -1,0 +1,60 @@
+name: Repository Migration Request
+description: Request a repository migration from GitHub Enterprise Server to GitHub Enterprise Cloud
+title: "[Migration] "
+labels: ["migration", "pending"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Repository Migration Request
+        
+        Use this form to request a migration from GitHub Enterprise Server to GitHub Enterprise Cloud (customersuccess.ghe.com).
+        
+  - type: input
+    id: source-url
+    attributes:
+      label: Source GitHub Enterprise Server URL
+      description: The URL of your GitHub Enterprise Server instance
+      placeholder: https://ghes.example.com
+    validations:
+      required: true
+      
+  - type: input
+    id: target-org
+    attributes:
+      label: Target GitHub Enterprise Cloud Organization
+      description: The organization name on customersuccess.ghe.com where repositories should be migrated
+      placeholder: my-org
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: migration-type
+    attributes:
+      label: Migration Type
+      description: Select whether to migrate all repositories or specific ones
+      options:
+        - All repositories
+        - Specific repositories
+    validations:
+      required: true
+      
+  - type: textarea
+    id: repositories
+    attributes:
+      label: Repository Names
+      description: If migrating specific repositories, list them (one per line). Leave empty if migrating all repositories.
+      placeholder: |
+        repo-1
+        repo-2
+        repo-3
+    validations:
+      required: false
+      
+  - type: textarea
+    id: additional-notes
+    attributes:
+      label: Additional Notes
+      description: Any additional information or special requirements for this migration
+    validations:
+      required: false
