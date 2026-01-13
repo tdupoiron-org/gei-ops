@@ -78,46 +78,188 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Validate credentials
+      - name: Validate secrets
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.issue.number,
-              body: `✅ **Validation Complete**\n\n` +
-                    `GitHub Enterprise Importer CLI installed successfully.\n\n` +
-                    `⚠️ **Note:** This is a simplified workflow. For actual migrations, you'll need to:\n` +
-                    `- Configure GHES and GHE Cloud PAT tokens as secrets\n` +
-                    `- Run the actual GEI migration commands\n` +
-                    `- Handle migration logs and errors\n\n` +
-                    `See the [GEI documentation](https://docs.github.com/en/migrations/using-github-enterprise-importer) for details.`
-            });
-      
-      - name: Complete migration
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.issue.number,
-              body: `✨ **Migration Workflow Complete**\n\n` +
-                    `The basic workflow has been executed successfully.\n\n` +
-                    `**Next Steps:**\n` +
-                    `1. Configure the required secrets (GHES_PAT, GHE_CLOUD_PAT)\n` +
-                    `2. Implement actual GEI migration commands\n` +
-                    `3. Add error handling and retry logic\n` +
-                    `4. Set up notifications for completion`
-            });
+            const ghesPatExists = '${{ secrets.GHES_PAT }}' !== '';
+            const gheCloudPatExists = '${{ secrets.GHE_CLOUD_PAT }}' !== '';
             
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.issue.number,
-              labels: ['completed']
-            });
+            if (!ghesPatExists || !gheCloudPatExists) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `❌ **Migration Failed - Missing Secrets**\n\n` +
+                      `Required secrets are not configured:\n` +
+                      `- GHES_PAT: ${ghesPatExists ? '✅' : '❌'}\n` +
+                      `- GHE_CLOUD_PAT: ${gheCloudPatExists ? '✅' : '❌'}\n\n` +
+                      `Please contact your administrator to configure the required secrets.`
+              });
+              
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: ['failed']
+              });
+              
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                name: 'in-progress'
+              }).catch(() => {});
+              
+              core.setFailed('Required secrets are not configured');
+            }
+      
+      - name: Generate migration log path
+        id: log-path
+        run: |
+          LOG_PATH="migration-logs/$(date +%Y%m%d-%H%M%S)-issue-${{ github.event.issue.number }}"
+          mkdir -p "$LOG_PATH"
+          echo "path=$LOG_PATH" >> $GITHUB_OUTPUT
+      
+      - name: Run GEI migration
+        id: migrate
+        run: |
+          set -e
+          
+          SOURCE_URL="${{ steps.parse.outputs.source-url }}"
+          TARGET_ORG="${{ steps.parse.outputs.target-org }}"
+          MIGRATION_TYPE="${{ steps.parse.outputs.migration-type }}"
+          REPOSITORIES="${{ steps.parse.outputs.repositories }}"
+          LOG_PATH="${{ steps.log-path.outputs.path }}"
+          
+          echo "Starting migration process..."
+          echo "Source: $SOURCE_URL"
+          echo "Target: $TARGET_ORG"
+          echo "Type: $MIGRATION_TYPE"
+          
+          # Extract source org from URL
+          SOURCE_ORG=$(echo "$SOURCE_URL" | sed -E 's|https?://[^/]+/||' | cut -d'/' -f1)
+          SOURCE_HOST=$(echo "$SOURCE_URL" | sed -E 's|https?://||' | cut -d'/' -f1)
+          
+          if [ "$MIGRATION_TYPE" = "All repositories" ]; then
+            echo "Migrating all repositories from $SOURCE_ORG to $TARGET_ORG..."
+            
+            # Generate migration script for all repos
+            gh gei generate-script \
+              --github-source-org "$SOURCE_ORG" \
+              --github-target-org "$TARGET_ORG" \
+              --ghes-api-url "https://$SOURCE_HOST/api/v3" \
+              --output "$LOG_PATH/migration-script.ps1" \
+              --verbose
+            
+            # For GitHub Actions, we need to migrate repos one by one
+            # Get list of repositories
+            REPOS=$(gh api "/orgs/$SOURCE_ORG/repos" \
+              --hostname "$SOURCE_HOST" \
+              --paginate \
+              --jq '.[].name')
+            
+            echo "$REPOS" | while read -r REPO; do
+              if [ -n "$REPO" ]; then
+                echo "Migrating repository: $REPO"
+                
+                gh gei migrate-repo \
+                  --github-source-org "$SOURCE_ORG" \
+                  --source-repo "$REPO" \
+                  --github-target-org "$TARGET_ORG" \
+                  --target-repo "$REPO" \
+                  --ghes-api-url "https://$SOURCE_HOST/api/v3" \
+                  --wait \
+                  --verbose 2>&1 | tee -a "$LOG_PATH/$REPO-migration.log"
+              fi
+            done
+            
+          else
+            echo "Migrating specific repositories..."
+            
+            # Split repositories by newlines or commas
+            echo "$REPOSITORIES" | tr '\n' ',' | tr ',' '\n' | while read -r REPO; do
+              REPO=$(echo "$REPO" | xargs)  # Trim whitespace
+              
+              if [ -n "$REPO" ]; then
+                echo "Migrating repository: $REPO"
+                
+                gh gei migrate-repo \
+                  --github-source-org "$SOURCE_ORG" \
+                  --source-repo "$REPO" \
+                  --github-target-org "$TARGET_ORG" \
+                  --target-repo "$REPO" \
+                  --ghes-api-url "https://$SOURCE_HOST/api/v3" \
+                  --wait \
+                  --verbose 2>&1 | tee -a "$LOG_PATH/$REPO-migration.log"
+              fi
+            done
+          fi
+          
+          echo "Migration completed successfully!"
+        env:
+          GH_PAT: ${{ secrets.GHES_PAT }}
+          GH_SOURCE_PAT: ${{ secrets.GHES_PAT }}
+          GH_TARGET_PAT: ${{ secrets.GHE_CLOUD_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GHE_CLOUD_PAT }}
+        continue-on-error: true
+      
+      - name: Upload migration logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-logs-${{ github.event.issue.number }}
+          path: ${{ steps.log-path.outputs.path }}
+          retention-days: 30
+      
+      - name: Update issue - Migration results
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const migrationSuccess = '${{ steps.migrate.outcome }}' === 'success';
+            
+            if (migrationSuccess) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `✅ **Migration Completed Successfully**\n\n` +
+                      `All repositories have been migrated to the target organization.\n\n` +
+                      `**Details:**\n` +
+                      `- Source: ${{ steps.parse.outputs.source-url }}\n` +
+                      `- Target: ${{ steps.parse.outputs.target-org }}\n` +
+                      `- Type: ${{ steps.parse.outputs.migration-type }}\n\n` +
+                      `Migration logs are available in the workflow artifacts.`
+              });
+              
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: ['completed']
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `❌ **Migration Failed**\n\n` +
+                      `The migration encountered errors. Please check the workflow logs and artifacts for details.\n\n` +
+                      `**Troubleshooting:**\n` +
+                      `1. Verify PAT tokens have correct permissions\n` +
+                      `2. Check repository names are correct\n` +
+                      `3. Ensure source repositories are accessible\n` +
+                      `4. Review migration logs in workflow artifacts`
+              });
+              
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                labels: ['failed']
+              });
+            }
             
             await github.rest.issues.removeLabel({
               owner: context.repo.owner,
@@ -125,10 +267,17 @@ jobs:
               issue_number: context.payload.issue.number,
               name: 'in-progress'
             }).catch(() => {});
-            
+      
+      - name: Close issue on success
+        if: steps.migrate.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.issue.number,
-              state: 'closed'
+              state: 'closed',
+              state_reason: 'completed'
             });
+
