@@ -124,102 +124,138 @@ jobs:
           mkdir -p "$LOG_PATH"
           echo "path=$LOG_PATH" >> $GITHUB_OUTPUT
       
+      - name: Get repositories to migrate
+        id: get-repos
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GHES_PAT }}
+          script: |
+            const sourceUrl = '${{ steps.parse.outputs.source-url }}'.trim().replace(/\/+$/, '');
+            const sourceOrg = '${{ steps.parse.outputs.source-org }}';
+            const migrationType = '${{ steps.parse.outputs.migration-type }}';
+            const repositoriesInput = '${{ steps.parse.outputs.repositories }}';
+            
+            // Extract hostname from URL
+            const sourceHost = sourceUrl.replace(/^https?:\/\//, '').split('/')[0];
+            
+            console.log('Source Host:', sourceHost);
+            console.log('Source Org:', sourceOrg);
+            console.log('Migration Type:', migrationType);
+            
+            let repositories = [];
+            
+            if (migrationType === 'All repositories') {
+              // Use Octokit to list all repositories from source GHES
+              const octokit = github.getOctokit('${{ secrets.GHES_PAT }}', {
+                baseUrl: `https://${sourceHost}/api/v3`
+              });
+              
+              const { data: repos } = await octokit.rest.repos.listForOrg({
+                org: sourceOrg,
+                per_page: 100
+              });
+              
+              repositories = repos.map(repo => repo.name);
+              console.log(`Found ${repositories.length} repositories:`, repositories);
+            } else {
+              // Parse specific repositories list
+              repositories = repositoriesInput
+                .split(/[\n,]/)
+                .map(r => r.trim())
+                .filter(r => r.length > 0);
+              console.log(`Migrating ${repositories.length} specific repositories:`, repositories);
+            }
+            
+            core.setOutput('repositories', JSON.stringify(repositories));
+            core.setOutput('source-host', sourceHost);
+            return repositories;
+      
       - name: Authenticate to target GHEC
         run: |
           echo "${{ secrets.GHE_CLOUD_PAT }}" | gh auth login --hostname customersuccess.ghe.com --with-token
-        
-      - name: Run GEI migration
+      
+      - name: Migrate repositories
         id: migrate
-        run: |
-          set -e
-          
-          SOURCE_URL="${{ steps.parse.outputs.source-url }}"
-          SOURCE_ORG="${{ steps.parse.outputs.source-org }}"
-          TARGET_ORG="${{ steps.parse.outputs.target-org }}"
-          MIGRATION_TYPE="${{ steps.parse.outputs.migration-type }}"
-          REPOSITORIES="${{ steps.parse.outputs.repositories }}"
-          LOG_PATH="${{ steps.log-path.outputs.path }}"
-          
-          # Trim whitespace and trailing slashes from SOURCE_URL
-          SOURCE_URL=$(echo "$SOURCE_URL" | xargs | sed 's:/*$::')
-          
-          echo "Starting migration process..."
-          echo "Source: $SOURCE_URL"
-          echo "Source Org: $SOURCE_ORG"
-          echo "Target: $TARGET_ORG"
-          echo "Type: $MIGRATION_TYPE"
-          
-          # Extract source host from URL
-          SOURCE_HOST=$(echo "$SOURCE_URL" | sed -E 's|https?://||' | sed 's:/*$::' | cut -d'/' -f1)
-          GHES_API_URL="https://${SOURCE_HOST}/api/v3"
-          
-          echo "GHES Host: $SOURCE_HOST"
-          echo "GHES API URL: $GHES_API_URL"
-          
-          if [ "$MIGRATION_TYPE" = "All repositories" ]; then
-            echo "Migrating all repositories from $SOURCE_ORG to $TARGET_ORG..."
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const repositories = JSON.parse('${{ steps.get-repos.outputs.repositories }}');
+            const sourceUrl = '${{ steps.parse.outputs.source-url }}'.trim().replace(/\/+$/, '');
+            const sourceOrg = '${{ steps.parse.outputs.source-org }}';
+            const targetOrg = '${{ steps.parse.outputs.target-org }}';
+            const sourceHost = '${{ steps.get-repos.outputs.source-host }}';
+            const logPath = '${{ steps.log-path.outputs.path }}';
+            const ghesApiUrl = `https://${sourceHost}/api/v3`;
             
-            # Generate migration script for all repos
-            gh gei generate-script \
-              --github-source-org "$SOURCE_ORG" \
-              --github-target-org "$TARGET_ORG" \
-              --ghes-api-url "$GHES_API_URL" \
-              --target-api-url "https://api.customersuccess.ghe.com" \
-              --output "$LOG_PATH/migration-script.ps1" \
-              --verbose
+            console.log('Starting migration process...');
+            console.log('Source:', sourceUrl);
+            console.log('Source Org:', sourceOrg);
+            console.log('Target Org:', targetOrg);
+            console.log('GHES API URL:', ghesApiUrl);
+            console.log('Repositories to migrate:', repositories);
             
-            # For GitHub Actions, we need to migrate repos one by one
-            # Get list of repositories
-            REPOS=$(gh api "/orgs/$SOURCE_ORG/repos" \
-              --hostname "$SOURCE_HOST" \
-              --paginate \
-              --jq '.[].name')
+            const { exec } = require('child_process');
+            const { promisify } = require('util');
+            const execAsync = promisify(exec);
             
-            echo "$REPOS" | while read -r REPO; do
-              if [ -n "$REPO" ]; then
-                echo "Migrating repository: $REPO"
-                
-                gh gei migrate-repo \
-                  --github-source-org "$SOURCE_ORG" \
-                  --source-repo "$REPO" \
-                  --github-target-org "$TARGET_ORG" \
-                  --target-repo "$REPO" \
-                  --ghes-api-url "$GHES_API_URL" \
-                  --target-api-url "https://api.customersuccess.ghe.com" \
-                  --wait \
-                  --verbose 2>&1 | tee -a "$LOG_PATH/$REPO-migration.log"
-              fi
-            done
+            let successCount = 0;
+            let failureCount = 0;
+            const failures = [];
             
-          else
-            echo "Migrating specific repositories..."
-            
-            # Split repositories by newlines or commas
-            echo "$REPOSITORIES" | tr '\n' ',' | tr ',' '\n' | while read -r REPO; do
-              REPO=$(echo "$REPO" | xargs)  # Trim whitespace
+            for (const repo of repositories) {
+              console.log(`\n=== Migrating repository: ${repo} ===`);
               
-              if [ -n "$REPO" ]; then
-                echo "Migrating repository: $REPO"
-                
-                gh gei migrate-repo \
-                  --github-source-org "$SOURCE_ORG" \
-                  --source-repo "$REPO" \
-                  --github-target-org "$TARGET_ORG" \
-                  --target-repo "$REPO" \
-                  --ghes-api-url "$GHES_API_URL" \
+              try {
+                const command = `gh gei migrate-repo \
+                  --github-source-org "${sourceOrg}" \
+                  --source-repo "${repo}" \
+                  --github-target-org "${targetOrg}" \
+                  --target-repo "${repo}" \
+                  --ghes-api-url "${ghesApiUrl}" \
                   --target-api-url "https://api.customersuccess.ghe.com" \
                   --wait \
-                  --verbose 2>&1 | tee -a "$LOG_PATH/$REPO-migration.log"
-              fi
-            done
-          fi
-          
-          echo "Migration completed successfully!"
-        env:
-          GH_PAT: ${{ secrets.GHE_CLOUD_PAT }}
-          GH_SOURCE_PAT: ${{ secrets.GHES_PAT }}
-          GITHUB_TOKEN: ${{ secrets.GHE_CLOUD_PAT }}
-        continue-on-error: true
+                  --verbose 2>&1 | tee -a "${logPath}/${repo}-migration.log"`;
+                
+                const { stdout, stderr } = await execAsync(command, {
+                  env: {
+                    ...process.env,
+                    GH_PAT: '${{ secrets.GHE_CLOUD_PAT }}',
+                    GH_SOURCE_PAT: '${{ secrets.GHES_PAT }}',
+                    GITHUB_TOKEN: '${{ secrets.GHE_CLOUD_PAT }}'
+                  }
+                });
+                
+                console.log(stdout);
+                if (stderr) console.error(stderr);
+                
+                successCount++;
+                console.log(`✅ Successfully migrated: ${repo}`);
+              } catch (error) {
+                failureCount++;
+                failures.push(repo);
+                console.error(`❌ Failed to migrate ${repo}:`, error.message);
+                
+                // Continue with next repo instead of stopping
+                continue;
+              }
+            }
+            
+            console.log('\n=== Migration Summary ===');
+            console.log(`Total: ${repositories.length}`);
+            console.log(`Success: ${successCount}`);
+            console.log(`Failed: ${failureCount}`);
+            if (failures.length > 0) {
+              console.log('Failed repositories:', failures);
+            }
+            
+            core.setOutput('success-count', successCount);
+            core.setOutput('failure-count', failureCount);
+            core.setOutput('failed-repos', JSON.stringify(failures));
+            
+            // Only fail the step if ALL migrations failed
+            if (failureCount === repositories.length) {
+              throw new Error('All repository migrations failed');
+            }
       
       - name: Upload migration logs
         if: always()
@@ -235,21 +271,23 @@ jobs:
         with:
           script: |
             const migrationSuccess = '${{ steps.migrate.outcome }}' === 'success';
+            const successCount = '${{ steps.migrate.outputs.success-count }}' || '0';
+            const failureCount = '${{ steps.migrate.outputs.failure-count }}' || '0';
+            const failedRepos = '${{ steps.migrate.outputs.failed-repos }}' || '[]';
+            const repositories = JSON.parse('${{ steps.get-repos.outputs.repositories }}');
             
-            if (migrationSuccess) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.issue.number,
-                body: `✅ **Migration Completed Successfully**\n\n` +
-                      `All repositories have been migrated to the target organization.\n\n` +
-                      `**Details:**\n` +
-                      `- Source: ${{ steps.parse.outputs.source-url }}\n` +
-                      `- Source Org: ${{ steps.parse.outputs.source-org }}\n` +
-                      `- Target Org: ${{ steps.parse.outputs.target-org }}\n` +
-                      `- Type: ${{ steps.parse.outputs.migration-type }}\n\n` +
-                      `Migration logs are available in the workflow artifacts.`
-              });
+            let body = '';
+            
+            if (migrationSuccess && failureCount === '0') {
+              body = `✅ **Migration Completed Successfully**\n\n` +
+                     `All ${successCount} repositories have been migrated to the target organization.\n\n` +
+                     `**Details:**\n` +
+                     `- Source: ${{ steps.parse.outputs.source-url }}\n` +
+                     `- Source Org: ${{ steps.parse.outputs.source-org }}\n` +
+                     `- Target Org: ${{ steps.parse.outputs.target-org }}\n` +
+                     `- Type: ${{ steps.parse.outputs.migration-type }}\n` +
+                     `- Migrated: ${repositories.join(', ')}\n\n` +
+                     `Migration logs are available in the workflow artifacts.`;
               
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
@@ -257,19 +295,35 @@ jobs:
                 issue_number: context.payload.issue.number,
                 labels: ['completed']
               });
-            } else {
-              await github.rest.issues.createComment({
+            } else if (migrationSuccess && failureCount > '0') {
+              const failed = JSON.parse(failedRepos);
+              body = `⚠️ **Migration Partially Completed**\n\n` +
+                     `Some repositories failed to migrate.\n\n` +
+                     `**Summary:**\n` +
+                     `- Total: ${repositories.length}\n` +
+                     `- Success: ${successCount}\n` +
+                     `- Failed: ${failureCount}\n\n` +
+                     `**Failed repositories:**\n${failed.map(r => `- ${r}`).join('\n')}\n\n` +
+                     `**Details:**\n` +
+                     `- Source: ${{ steps.parse.outputs.source-url }}\n` +
+                     `- Source Org: ${{ steps.parse.outputs.source-org }}\n` +
+                     `- Target Org: ${{ steps.parse.outputs.target-org }}\n\n` +
+                     `Please check the workflow logs and artifacts for details.`;
+              
+              await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.payload.issue.number,
-                body: `❌ **Migration Failed**\n\n` +
-                      `The migration encountered errors. Please check the workflow logs and artifacts for details.\n\n` +
-                      `**Troubleshooting:**\n` +
-                      `1. Verify PAT tokens have correct permissions\n` +
-                      `2. Check repository names are correct\n` +
-                      `3. Ensure source repositories are accessible\n` +
-                      `4. Review migration logs in workflow artifacts`
+                labels: ['partial-failure']
               });
+            } else {
+              body = `❌ **Migration Failed**\n\n` +
+                     `The migration encountered errors. Please check the workflow logs and artifacts for details.\n\n` +
+                     `**Troubleshooting:**\n` +
+                     `1. Verify PAT tokens have correct permissions\n` +
+                     `2. Check repository names are correct\n` +
+                     `3. Ensure source repositories are accessible\n` +
+                     `4. Review migration logs in workflow artifacts`;
               
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
@@ -279,6 +333,13 @@ jobs:
               });
             }
             
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: body
+            });
+            
             await github.rest.issues.removeLabel({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -287,7 +348,7 @@ jobs:
             }).catch(() => {});
       
       - name: Close issue on success
-        if: steps.migrate.outcome == 'success'
+        if: steps.migrate.outcome == 'success' && steps.migrate.outputs.failure-count == '0'
         uses: actions/github-script@v7
         with:
           script: |

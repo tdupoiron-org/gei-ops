@@ -28,4 +28,7 @@ Have a issue form that collects necessary information from the user, such as:
 Have a workflow that triggers the GitHub Enterprise Importer tool based on the issue form submission.
 
 Update the issue with progress updates during the migration process.
+
+Do not use the generate-script tool. Only use individual repo migration command lines.
+Do use octokit for any research needed in the GitHub instances.
 </constraints>
