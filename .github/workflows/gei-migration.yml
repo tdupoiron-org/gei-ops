@@ -128,7 +128,6 @@ jobs:
         id: get-repos
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GHES_PAT }}
           script: |
             const sourceUrl = '${{ steps.parse.outputs.source-url }}'.trim().replace(/\/+$/, '');
             const sourceOrg = '${{ steps.parse.outputs.source-org }}';
@@ -145,17 +144,16 @@ jobs:
             let repositories = [];
             
             if (migrationType === 'All repositories') {
-              // Use Octokit to list all repositories from source GHES
-              const octokit = github.getOctokit('${{ secrets.GHES_PAT }}', {
-                baseUrl: `https://${sourceHost}/api/v3`
-              });
-              
-              const { data: repos } = await octokit.rest.repos.listForOrg({
-                org: sourceOrg,
+              // Use github.request to list all repositories from source GHES
+              const response = await github.request(`GET https://${sourceHost}/api/v3/orgs/${sourceOrg}/repos`, {
+                headers: {
+                  authorization: `token ${{ secrets.GHES_PAT }}`,
+                  accept: 'application/vnd.github.v3+json'
+                },
                 per_page: 100
               });
               
-              repositories = repos.map(repo => repo.name);
+              repositories = response.data.map(repo => repo.name);
               console.log(`Found ${repositories.length} repositories:`, repositories);
             } else {
               // Parse specific repositories list
