@@ -234,7 +234,6 @@ jobs:
                   --target-repo "${repo}" \
                   --ghes-api-url "${ghesApiUrl}" \
                   --target-api-url "https://api.customersuccess.ghe.com" \
-                  --wait \
                   --verbose 2>&1 | tee -a "${logPath}/${repo}-migration.log"`;
                 
                 const { stdout, stderr } = await execAsync(command, {
