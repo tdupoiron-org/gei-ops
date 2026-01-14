@@ -144,17 +144,40 @@ jobs:
             let repositories = [];
             
             if (migrationType === 'All repositories') {
-              // Use github.request to list all repositories from source GHES
-              const response = await github.request(`GET https://${sourceHost}/api/v3/orgs/${sourceOrg}/repos`, {
-                headers: {
-                  authorization: `token ${{ secrets.GHES_PAT }}`,
-                  accept: 'application/vnd.github.v3+json'
-                },
-                per_page: 100
-              });
+              // Use fetch to list all repositories from source GHES with pagination
+              let page = 1;
+              let hasMore = true;
               
-              repositories = response.data.map(repo => repo.name);
-              console.log(`Found ${repositories.length} repositories:`, repositories);
+              while (hasMore) {
+                const response = await fetch(`https://${sourceHost}/api/v3/orgs/${sourceOrg}/repos?per_page=100&page=${page}`, {
+                  headers: {
+                    'Authorization': `token ${{ secrets.GHES_PAT }}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                  }
+                });
+                
+                if (!response.ok) {
+                  throw new Error(`Failed to fetch repositories: ${response.status} ${response.statusText}`);
+                }
+                
+                const repos = await response.json();
+                
+                if (repos.length === 0) {
+                  hasMore = false;
+                } else {
+                  repositories.push(...repos.map(repo => repo.name));
+                  console.log(`Fetched page ${page}: ${repos.length} repositories`);
+                  
+                  // Check if there are more pages
+                  if (repos.length < 100) {
+                    hasMore = false;
+                  } else {
+                    page++;
+                  }
+                }
+              }
+              
+              console.log(`Found ${repositories.length} total repositories:`, repositories);
             } else {
               // Parse specific repositories list
               repositories = repositoriesInput
